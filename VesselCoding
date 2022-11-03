@@ -1,0 +1,114 @@
+USE dbIMS
+go
+IF OBJECT_ID('dbo.spUTGetVesselCoding') IS NOT NULL
+BEGIN
+    DROP PROCEDURE dbo.spUTGetVesselCoding
+    IF OBJECT_ID('dbo.spUTGetVesselCoding') IS NOT NULL
+        PRINT '<<< FAILED DROPPING PROCEDURE dbo.spUTGetVesselCoding >>>'
+    ELSE
+        PRINT '<<< DROPPED PROCEDURE dbo.spUTGetVesselCoding >>>'
+END
+go
+create procedure dbo.spUTGetVesselCoding
+
+/* Procedure name: spUTGetVesselCoding
+
+   Parameters:
+    Input:    ProductCode, PackageCode, StockCode, PlantAreaId, RequestDate (optional)
+    Output:    A result set containing potentially multiple rows of the column @PrintedCode - char(25)
+
+   Called Stored Procedures:
+    SpUTGetSCBCode
+    NOTE: spUTGetVesselCoding, spUTGetCarrierCoding, and spUTGetVesselCoding
+          all determine @FormatCode then call spUTGetSCBCode
+
+   Return the vessel coding required for the given PCS, line & date.
+   Default the date to current date if it is not given.
+
+   The formatting code used is determined by the mapping of Stock Code Book material types
+   to the BOM Material Types.  The first code found that corresponds to a BOM
+   Material Type of NOT("CORR", "CTN", "STCS" or "TRAY") and NOT like ("CARR") is used.
+
+   To find a format code, check in PCSCodingFormat first, then in StockCodingFormat if not found.
+   This means any coding specified for the PCS is used instead of coding specified for the Stock Code.
+
+   Written by: JDH & DMD 1/3/97
+
+Modifications:
+    DMD - 1/27/98 : added check for leading space in stock code
+
+    DMD:002 - 8/16/04 : Only look in StockCodingFormat when there are no entries for a PCS in
+                    PCSCodingFormat, regardless of StockCodeBookMaterialType.  If there are entries
+                    in PCSCodingFormat, those are the only valid StockCodeBookMaterialTypes, don't DEFAULT
+                    to StockCodingFormat.
+    EG - 11/29/04 : Phased out old tables: PCSCodingFormat, StockCodingFormat, StockCodeBook.
+    
+    DMD - 03/06/06: added optional parameter EquipNbr
+    SM- 11/20/2006 : adding audting call 
+    ATN - 11/29/2006 :  Added optional output param @PrintedCode
+    RG - 12/17/2008 :  Added the special case for 12 oz VG codeing for Columbus only
+    JDS - 1/20/2009: Pulled out FormatCode logic into separate proc spUTGetVesselFormatCd, as this will be called directly by spBuildSCBWork too.
+                     Besides that change this proc left as before to preserve compatibility, new proc created to avoid duplication of logic across
+                     mulitple stored procs.
+*/
+(
+    @ProductCode    char(2),
+    @PackageCode    char(3),
+    @StockCode      char(3),
+    @PlantAreaId    char(4),
+    @RequestDate    datetime,
+    @EquipNbr        smallint = null,
+    @PrintedCode   VARCHAR(82) = NULL OUTPUT
+)
+
+as
+
+declare	@FormatCode char(4)
+
+if @RequestDate is null
+    select @RequestDate = getdate()
+
+/* Stock Code Book uses a two character stock code without the "-" or the "R" */
+if substring(@StockCode,1,1) in ("-", "R", " ") and datalength(@StockCode) = 3
+    select @StockCode = rtrim(substring(@StockCode,2,2))
+
+select @FormatCode = null
+
+exec spUTGetVesselFormatCd
+    @ProductCode,
+    @PackageCode,
+    @StockCode,
+    @RequestDate,
+    @FormatCode OUTPUT
+
+If @PrintedCode is null
+exec spUTGetSCBCoding
+    @ProductCode,
+    @PackageCode,
+    @StockCode,
+    @PlantAreaId,
+    @RequestDate,
+    @FormatCode
+else 
+exec spUTGetSCBCoding
+    @ProductCode,
+    @PackageCode,
+    @StockCode,
+    @PlantAreaId,
+    @RequestDate,
+    @FormatCode,
+    @PrintedCode output
+go
+EXEC sp_procxmode 'dbo.spUTGetVesselCoding', 'unchained'
+go
+IF OBJECT_ID('dbo.spUTGetVesselCoding') IS NOT NULL
+    PRINT '<<< CREATED PROCEDURE dbo.spUTGetVesselCoding >>>'
+ELSE
+    PRINT '<<< FAILED CREATING PROCEDURE dbo.spUTGetVesselCoding >>>'
+go
+GRANT EXECUTE ON dbo.spUTGetVesselCoding TO flextrans_role
+go
+GRANT EXECUTE ON dbo.spUTGetVesselCoding TO ims_firecall_role
+go
+GRANT EXECUTE ON dbo.spUTGetVesselCoding TO ims_rw_role
+go
